@@ -8,7 +8,7 @@ import time
 
 MSG_SIZE = 1500
 DATA_SIZE = 1472
-TIMEOUT = 2
+TIMEOUT = .2
 SEQN = 0
 SEQUENCE_TO_MESSAGE = {}
 
@@ -23,6 +23,7 @@ def send_next_packet(seqn, sock, dest):
 
   # Map sequence number to message and store
   SEQUENCE_TO_MESSAGE[seqn] = msg
+  log(f'Adding sequence number {seqn} to map')
 
   if len(msg["data"]) > 0:
     assert (len(msg) <= DATA_SIZE), f"ERROR: Datagram is longer ({len(msg)}) than {DATA_SIZE} bytes!!!"
@@ -33,6 +34,54 @@ def send_next_packet(seqn, sock, dest):
       log("[send data] " + str(seqn) + " (" + str(len(msg["data"])) + ")")
     return seqn + len(msg["data"])
   return seqn
+
+def send_and_wait_for_acks(sock, dest):
+  global SEQN
+  while True:
+    try:
+      result = sock.recvfrom(MSG_SIZE)
+      if result:
+        (data, _addr) = result
+        data = data.decode('ascii')
+
+        try:
+          decoded = json.loads(data)
+
+          earliest_sequence_not_acked = min(SEQUENCE_TO_MESSAGE.keys())
+          next_sequence = earliest_sequence_not_acked + len(SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked]["data"])
+
+          log(f'Should be receiving {next_sequence}')
+          # If there is an ack, send next packet
+          if decoded['ack'] == next_sequence:
+
+            log(f"[recv ack] {SEQN}")
+
+            del SEQUENCE_TO_MESSAGE[min(SEQUENCE_TO_MESSAGE.keys())]
+
+            # Try to send next packet; break if no more data
+            new_seq = send_next_packet(SEQN, sock, dest)
+
+            if new_seq == SEQN:
+              log('should return')
+              break
+            SEQN = new_seq
+        except (ValueError, KeyError, TypeError) as e:
+          log(f"[recv corrupt packet] {e.__str__}")
+
+    except socket.timeout as e:
+      log(f"[error] did not recieve ack for {SEQN}")
+
+      earliest_sequence_not_acked = min(SEQUENCE_TO_MESSAGE.keys())
+
+      msg = {"sequence": earliest_sequence_not_acked, 
+        "data": SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked]["data"],
+        "eof": False}
+
+      log("[retransmit data] " + str(earliest_sequence_not_acked) + " (" + str(len(msg["data"])) + ")")
+
+      sock.sendto(json.dumps(msg).encode('ascii'), dest)
+
+  return
 
 def main():
   # Bind to localhost and an ephemeral port
@@ -46,53 +95,17 @@ def main():
   sock.settimeout(TIMEOUT)
 
   # Send first packet
-  SEQN = send_next_packet(0, sock, dest)
+  global SEQN
+  updated_sequence_number = send_next_packet(SEQN, sock, dest)
+  SEQN = updated_sequence_number
 
   # Now read in data, send packets
-  while True:
-    log("ABOUT TO SLEEP")
+  send_and_wait_for_acks(sock, dest)
 
-    try:
-      result = sock.recvfrom(MSG_SIZE)
-      if result:
-        (data, _addr) = result
-        data = data.decode('ascii')
+  sock.sendto(json.dumps({"eof": True}).encode('ascii'), dest)
 
-        try:
-          decoded = json.loads(data)
+  log('does return')
 
-          earliest_sequence_not_acked = min(SEQUENCE_TO_MESSAGE)
-
-          # If there is an ack, send next packet
-          if decoded['ack'] ==  earliest_sequence_not_acked + len(SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked]["data"]):
-
-            log(f"[recv ack] {SEQN}")
-
-            del SEQUENCE_TO_MESSAGE[min(SEQUENCE_TO_MESSAGE.keys())]
-
-            # Try to send next packet; break if no more data
-            new_seq = send_next_packet(SEQN, sock, dest)
-            if new_seq == SEQN:
-              break
-            SEQN = new_seq
-        except (ValueError, KeyError, TypeError) as e:
-          log(f"[recv corrupt packet] {str(e)}")
-
-      log(f"(seqn {SEQN})")
-
-    except socket.timeout as e:
-      log(f"[error] did not recieve ack for {SEQN}")
-
-      earliest_sequence_not_acked = min(SEQUENCE_TO_MESSAGE)
-
-      msg = json.dumps({"sequence": earliest_sequence_not_acked, 
-        "data": SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked],
-        "eof": False})
-
-      sock.sendto(msg.encode('ascii'), dest)
-      main()
-
-  sock.sendto(json.dumps({"eof": True, "data": "", "sequence": seqn, "ack": False}).encode('ascii'), dest)
   sys.exit(0)
 
 if __name__ == '__main__':
