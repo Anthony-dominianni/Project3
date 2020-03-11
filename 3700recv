@@ -6,62 +6,81 @@ import datetime
 import json
 
 MSG_SIZE = 1500
-TIMEOUT = 10
+TIMEOUT = 30
+# Map of received packets, used to handle duplicates and reorder packets
+PACKETS = {}
+
 
 def log(string):
-  sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
-  sys.stderr.flush()
+    sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
+    sys.stderr.flush()
+
+
+def send_ack(decoded, sock, addr):
+    # Ignoring duplicates
+    if decoded['sequence'] not in PACKETS:
+        PACKETS[decoded['sequence']] = decoded['data']
+    msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data'])})
+    log("ABOUT TO SEND " + msg)
+    if sock.sendto(msg.encode('ascii'), addr) < len(msg):
+        log("[error] unable to fully send packet")
+
 
 def main():
-  # Bind to localhost and an ephemeral port
-  udp_ip = "127.0.0.1"
-  udp_port = 0
+    # Bind to localhost and an ephemeral port
+    udp_ip = "127.0.0.1"
+    udp_port = 0
 
-  # Set up the socket
-  sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-  sock.bind((udp_ip, udp_port))
-  sock.settimeout(TIMEOUT)
+    # Set up the socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((udp_ip, udp_port))
+    sock.settimeout(TIMEOUT)
 
-  # Get port we bound to
-  udp_port = sock.getsockname()[1]
-  log(f"[bound] {udp_port}")
+    # Get port we bound to
+    udp_port = sock.getsockname()[1]
+    log(f"[bound] {udp_port}")
 
-  # Now listen for packets
-  while True:
-    result = sock.recvfrom(MSG_SIZE)
+    expected_ack = 0
 
-    # If nothing is ready, we hit the timeout
-    if result:
-      (data, addr) = result
-      data = data.decode('ascii')
+    # Now listen for packets
+    while True:
+        result = sock.recvfrom(MSG_SIZE)
 
-      try:
-        decoded = json.loads(data)
+        # If nothing is ready, we hit the timeout
+        if result:
+            (data, addr) = result
+            data = data.decode('ascii')
 
-        # If the EOF flag is set, exit
-        if decoded['eof']:
-          log("[completed]")
-          sys.exit(0)
+            try:
+                decoded = json.loads(data)
 
-        # If there is data, we accept it and print it out
-        if decoded['data']:
-          # If we receive data, we assume it's in-order
-          # You will need to do much more here
-          log(f"[recv data] {decoded['sequence']} ({len(decoded['data'])}) ACCEPTED (in-order)")
-          sys.stdout.write(decoded['data'])
+                # If the EOF flag is set, exit
+                if decoded['eof']:
+                    log("[completed]")
+                    sys.exit(0)
 
-        # Send back an ack to the sender
-        msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data'])})
-        log("ABOUT TO SEND " + msg)
-        if sock.sendto(msg.encode('ascii'), addr) < len(msg):
-          log("[error] unable to fully send packet")
+                # If there is data, we accept it and print it out
+                if decoded['data']:
+                    # Packet received is in expected order
+                    if decoded['sequence'] == expected_ack:
+                        log(f"[recv data] {decoded['sequence']} ({len(decoded['data'])}) ACCEPTED (in-order)")
+                        sys.stdout.write(decoded['data'])
+                        send_ack(decoded, sock, addr)
+                        expected_ack += len(decoded['data'])
+                        # Print out all packets in order
+                        while expected_ack in PACKETS:
+                            sys.stdout.write(PACKETS[expected_ack])
+                            expected_ack += len(PACKETS[expected_ack])
+                    else:
+                        send_ack(decoded, sock, addr)
 
-      except (ValueError, KeyError, TypeError) as exc:
-        log("[recv corrupt packet]")
-        raise exc
-    else:
-      log("[error] timeout")
-      sys.exit(-1)
+            except (ValueError, KeyError, TypeError) as exc:
+                log("[recv corrupt packet]")
+                raise exc
+        else:
+            log("[error] timeout")
+            sys.exit(-1)
+
 
 if __name__ == '__main__':
-  main()
+    main()
