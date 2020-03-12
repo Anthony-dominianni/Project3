@@ -99,7 +99,9 @@ def main():
   # Now read in data, send packets
   send_and_wait_for_acks(sock, dest)
 
-  sock.sendto(json.dumps({"eof": True}).encode('ascii'), dest)
+  for i in range(0, 10):
+    sock.sendto(json.dumps({"eof": True}).encode('ascii'), dest)
+    
   log('[completed]')
   sys.exit(0)
 
