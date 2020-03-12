@@ -50,7 +50,6 @@ def send_and_wait_for_acks(sock, dest):
           earliest_sequence_not_acked = min(SEQUENCE_TO_MESSAGE.keys())
           next_sequence = earliest_sequence_not_acked + len(SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked]["data"])
 
-          log(f'Should be receiving {next_sequence}')
           # If there is an ack, send next packet
           if decoded['ack'] == next_sequence:
 
@@ -62,11 +61,10 @@ def send_and_wait_for_acks(sock, dest):
             new_seq = send_next_packet(SEQN, sock, dest)
 
             if new_seq == SEQN:
-              log('should return')
-              break
+              return
             SEQN = new_seq
         except (ValueError, KeyError, TypeError) as e:
-          log(f"[recv corrupt packet] {e.__str__}")
+          log("[recv corrupt packet]")
 
     except socket.timeout as e:
       log(f"[error] did not recieve ack for {SEQN}")
@@ -75,13 +73,12 @@ def send_and_wait_for_acks(sock, dest):
 
       msg = {"sequence": earliest_sequence_not_acked, 
         "data": SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked]["data"],
-        "eof": False}
+        "ack": False, "eof": False}
 
-      log("[retransmit data] " + str(earliest_sequence_not_acked) + " (" + str(len(msg["data"])) + ")")
+      log('retransmitting')
+      log("[send data] " + str(earliest_sequence_not_acked) + " (" + str(len(msg["data"])) + ")")
 
       sock.sendto(json.dumps(msg).encode('ascii'), dest)
-
-  return
 
 def main():
   # Bind to localhost and an ephemeral port
@@ -103,9 +100,7 @@ def main():
   send_and_wait_for_acks(sock, dest)
 
   sock.sendto(json.dumps({"eof": True}).encode('ascii'), dest)
-
-  log('does return')
-
+  log('[completed]')
   sys.exit(0)
 
 if __name__ == '__main__':
