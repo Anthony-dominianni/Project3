@@ -6,7 +6,7 @@ import datetime
 import json
 
 MSG_SIZE = 1500
-TIMEOUT = 1
+TIMEOUT = 3
 # Map of received packets, used to handle duplicates and reorder packets
 PACKETS = {}
 
