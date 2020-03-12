@@ -6,7 +6,7 @@ import datetime
 import json
 
 MSG_SIZE = 1500
-TIMEOUT = 30
+TIMEOUT = 3
 # Map of received packets, used to handle duplicates and reorder packets
 PACKETS = {}
 
@@ -44,42 +44,42 @@ def main():
 
     # Now listen for packets
     while True:
-        result = sock.recvfrom(MSG_SIZE)
+        try:
+            result = sock.recvfrom(MSG_SIZE)
+            # If nothing is ready, we hit the timeout
+            if result:
+                (data, addr) = result
+                data = data.decode('ascii')
 
-        # If nothing is ready, we hit the timeout
-        if result:
-            (data, addr) = result
-            data = data.decode('ascii')
+                try:
+                    decoded = json.loads(data)
 
-            try:
-                decoded = json.loads(data)
+                    # If the EOF flag is set, exit
+                    if decoded['eof']:
+                        log("[completed]")
+                        sys.exit(0)
 
-                # If the EOF flag is set, exit
-                if decoded['eof']:
-                    log("[completed]")
-                    sys.exit(0)
+                    # If there is data, we accept it and print it out
+                    if decoded['data']:
+                        # Packet received is in expected order
+                        if decoded['sequence'] == expected_ack:
+                            log(f"[recv data] {decoded['sequence']} ({len(decoded['data'])}) ACCEPTED (in-order)")
+                            sys.stdout.write(decoded['data'])
+                            send_ack(decoded, sock, addr)
+                            expected_ack += len(decoded['data'])
+                            # Print out all packets in order
+                            while expected_ack in PACKETS:
+                                sys.stdout.write(PACKETS[expected_ack])
+                                expected_ack += len(PACKETS[expected_ack])
+                        else:
+                            send_ack(decoded, sock, addr)
 
-                # If there is data, we accept it and print it out
-                if decoded['data']:
-                    # Packet received is in expected order
-                    if decoded['sequence'] == expected_ack:
-                        log(f"[recv data] {decoded['sequence']} ({len(decoded['data'])}) ACCEPTED (in-order)")
-                        sys.stdout.write(decoded['data'])
-                        send_ack(decoded, sock, addr)
-                        expected_ack += len(decoded['data'])
-                        # Print out all packets in order
-                        while expected_ack in PACKETS:
-                            sys.stdout.write(PACKETS[expected_ack])
-                            expected_ack += len(PACKETS[expected_ack])
-                    else:
-                        send_ack(decoded, sock, addr)
+                except (ValueError, KeyError, TypeError) as exc:
+                    log("[recv corrupt packet]")
+                    raise exc
 
-            except (ValueError, KeyError, TypeError) as exc:
-                log("[recv corrupt packet]")
-                raise exc
-        else:
+        except socket.timeout:
             log("[error] timeout")
-            sys.exit(-1)
 
 
 if __name__ == '__main__':
