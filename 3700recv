@@ -6,7 +6,7 @@ import datetime
 import json
 
 MSG_SIZE = 1500
-TIMEOUT = 3
+TIMEOUT = 1
 # Map of received packets, used to handle duplicates and reorder packets
 PACKETS = {}
 
@@ -72,6 +72,8 @@ def main():
                             sys.stdout.write(PACKETS[expected_ack])
                             expected_ack += len(PACKETS[expected_ack])
                     else:
+                        log(f"[recv out of order] {decoded['sequence']} ({len(decoded['data'])}) "
+                            f"expected {expected_ack}")
                         send_ack(decoded, sock, addr)
 
             except (ValueError, KeyError, TypeError) as exc:
