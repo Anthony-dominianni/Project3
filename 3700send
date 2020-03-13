@@ -20,20 +20,19 @@ def log(string):
     sys.stderr.flush()
 
 
+def send_packet(msg, sock, dest):
+    if sock.sendto(json.dumps(msg).encode('ascii'), dest) < len(msg):
+        log("[error] unable to fully send packet")
+    else:
+        log("[send data] " + str(msg["sequence"]) + " (" + str(len(msg["data"])) + ")")
+
+
 def resend_dropped_packets(sock, dest):
-    global CWND
-    log("resetting CWND to 1")
-    CWND = 1
-    earliest_sequence_not_acked = min(SEQUENCE_TO_MESSAGE.keys())
-
-    msg = {"sequence": earliest_sequence_not_acked,
-           "data": SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked]["data"],
-           "ack": False, "eof": False}
-
-    log('retransmitting')
-    log("[send data] " + str(earliest_sequence_not_acked) + " (" + str(len(msg["data"])) + ")")
-
-    sock.sendto(json.dumps(msg).encode('ascii'), dest)
+    for seq in SEQUENCE_TO_MESSAGE.keys():
+        msg = {"sequence": seq,
+               "data": SEQUENCE_TO_MESSAGE[seq]["data"],
+               "ack": False, "eof": False}
+        send_packet(msg, sock, dest)
 
 
 def send_next_packet(seqn, sock, dest):
@@ -49,44 +48,45 @@ def send_next_packet(seqn, sock, dest):
         SEQUENCE_TO_MESSAGE[seqn] = msg
 
         assert (len(msg) <= DATA_SIZE), f"ERROR: Datagram is longer ({len(msg)}) than {DATA_SIZE} bytes!!!"
-
-        if sock.sendto(json.dumps(msg).encode('ascii'), dest) < len(msg):
-            log("[error] unable to fully send packet")
-        else:
-            log("[send data] " + str(seqn) + " (" + str(len(msg["data"])) + ")")
+        send_packet(msg, sock, dest)
         return seqn + len(msg["data"])
     return seqn
+
+
+def receive_ack(ack_data, recvtime):
+    global RTT
+    ack_seqn = ack_data['ack'] - ack_data['len']
+    if ack_seqn in SEQUENCE_TO_MESSAGE:
+        seq = SEQUENCE_TO_MESSAGE[ack_seqn]
+        dispatch = datetime.strptime(seq['dispatch'],
+                                     "%Y-%m-%d %H:%M:%S.%f")
+        diff = round((recvtime - dispatch).total_seconds(), 1)
+        RTT = ALPHA * RTT + (1 - ALPHA) * diff if RTT else diff
+        TIMEOUT = 2 * RTT
+        log(f"timeout updated to {str(TIMEOUT)}")
+        log(f"[recv ack] {str(ack_data)}")
+        log(f"removing {ack_seqn} from map")
+        del SEQUENCE_TO_MESSAGE[ack_seqn]
 
 
 def send_and_wait_for_acks(sock, dest):
     global SEQN
     global SEQUENCE_TO_MESSAGE
     global CWND
-    global RTT
     global TIMEOUT
     while True:
         try:
             result = sock.recvfrom(MSG_SIZE)
-            if result:
+            if not result:
+                resend_dropped_packets(sock, dest)
+            else:
+                recvtime = datetime.now()
                 (data, _addr) = result
                 data = data.decode('ascii')
-                recvtime = datetime.now()
                 try:
                     decoded = json.loads(data)
-                    ack_seqn = decoded['ack'] - decoded['len']
-                    # If there is an ack, send next packet
-                    if ack_seqn in SEQUENCE_TO_MESSAGE:
-                        seq = SEQUENCE_TO_MESSAGE[ack_seqn]
-                        dispatch = datetime.strptime(seq['dispatch'],
-                                                     "%Y-%m-%d %H:%M:%S.%f")
-                        diff = round((recvtime - dispatch).total_seconds(), 1)
-                        RTT = ALPHA*RTT + (1-ALPHA)*diff if RTT else diff
-                        TIMEOUT = 2 * RTT
-                        log(f"timeout updated to {str(TIMEOUT)}")
-                        log(f"[recv ack] {str(decoded)}")
-                        log(f"removing {ack_seqn} from map")
-                        del SEQUENCE_TO_MESSAGE[ack_seqn]
-
+                    # If there is an ack, update table and RTO
+                    receive_ack(decoded, recvtime)
                     # if dictionary is empty, send next wave of packets
                     if not SEQUENCE_TO_MESSAGE:
                         log("all acks received, CWND " + str(CWND))
@@ -103,10 +103,9 @@ def send_and_wait_for_acks(sock, dest):
                                 return
                             SEQN = new_seq
                 except (ValueError, KeyError, TypeError) as e:
-                    log(f"[recv corrupt packet] {e.message}")
-            else:
-                resend_dropped_packets(sock, dest)
+                    log(f"[recv corrupt packet] {e.__str__()}")
         except socket.timeout:
+            CWND = CWND // 2 if CWND > 1 else 1
             missing = []
             for seq in sorted(SEQUENCE_TO_MESSAGE.keys()):
                 missing.append(seq)
