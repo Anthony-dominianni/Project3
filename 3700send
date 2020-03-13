@@ -73,20 +73,19 @@ def send_and_wait_for_acks(sock, dest):
                 recvtime = datetime.now()
                 try:
                     decoded = json.loads(data)
-                    earliest_sequence_not_acked = min(SEQUENCE_TO_MESSAGE.keys())
-                    next_sequence = earliest_sequence_not_acked + len(
-                        SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked]["data"])
-
+                    ack_seqn = decoded['ack'] - decoded['len']
                     # If there is an ack, send next packet
-                    if decoded['ack'] == next_sequence:
-                        dispatch = datetime.strptime(SEQUENCE_TO_MESSAGE[earliest_sequence_not_acked]['dispatch'],
+                    if ack_seqn in SEQUENCE_TO_MESSAGE:
+                        seq = SEQUENCE_TO_MESSAGE[ack_seqn]
+                        dispatch = datetime.strptime(seq['dispatch'],
                                                      "%Y-%m-%d %H:%M:%S.%f")
                         diff = round((recvtime - dispatch).total_seconds(), 1)
                         RTT = ALPHA*RTT + (1-ALPHA)*diff if RTT else diff
                         TIMEOUT = 2 * RTT
+                        log(f"timeout updated to {str(TIMEOUT)}")
                         log(f"[recv ack] {str(decoded)}")
-                        log(f"removing {earliest_sequence_not_acked} from map")
-                        del SEQUENCE_TO_MESSAGE[min(SEQUENCE_TO_MESSAGE.keys())]
+                        log(f"removing {ack_seqn} from map")
+                        del SEQUENCE_TO_MESSAGE[ack_seqn]
 
                     # if dictionary is empty, send next wave of packets
                     if not SEQUENCE_TO_MESSAGE:
@@ -103,8 +102,8 @@ def send_and_wait_for_acks(sock, dest):
                                 log("Done, exiting.")
                                 return
                             SEQN = new_seq
-                except (ValueError, KeyError, TypeError):
-                    log("[recv corrupt packet]")
+                except (ValueError, KeyError, TypeError) as e:
+                    log(f"[recv corrupt packet] {e.message}")
             else:
                 resend_dropped_packets(sock, dest)
         except socket.timeout:
