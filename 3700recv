@@ -17,6 +17,13 @@ def log(string):
 
 
 def send_ack(decoded, sock, addr):
+    """
+    Function to send ack back to sender
+    :param decoded: packet received
+    :param sock: socket
+    :param addr: address
+    :return:
+    """
     # Ignoring duplicates
     if decoded['sequence'] not in PACKETS:
         PACKETS[decoded['sequence']] = decoded['data']
@@ -26,7 +33,39 @@ def send_ack(decoded, sock, addr):
         log("[error] unable to fully send packet")
 
 
+def receive(packet, ack, sock, addr):
+    """
+    Main receive packet logic. Writes to stout and sends acks
+    :param packet: data packet received
+    :param ack: expected ack
+    :param sock: socket
+    :param addr: destination address
+    :return:
+    """
+    if packet['data']:
+        # Packet received is in expected order
+        if packet['sequence'] == ack:
+            log(f"[recv data] {packet['sequence']} ({len(packet['data'])}) ACCEPTED (in-order)")
+            sys.stdout.write(packet['data'])
+            # send a few acks for high drop rate
+            for x in range(0, 3):
+                send_ack(packet, sock, addr)
+            ack += len(packet['data'])
+            # Print out all packets in order
+            while ack in PACKETS:
+                sys.stdout.write(PACKETS[ack])
+                ack += len(PACKETS[ack])
+        else:
+            log(f"[recv out of order] {packet['sequence']} ({len(packet['data'])}) "
+                f"expected {ack}")
+            send_ack(packet, sock, addr)
+
+
 def main():
+    """
+    Main execution loop of program
+    :return:
+    """
     # Bind to localhost and an ephemeral port
     udp_ip = "127.0.0.1"
     udp_port = 0
@@ -62,22 +101,7 @@ def main():
                         sys.exit(0)
 
                     # If there is data, we accept it and print it out
-                    if decoded['data']:
-                        # Packet received is in expected order
-                        if decoded['sequence'] == expected_ack:
-                            log(f"[recv data] {decoded['sequence']} ({len(decoded['data'])}) ACCEPTED (in-order)")
-                            sys.stdout.write(decoded['data'])
-                            for x in range (0, 3):
-                            	send_ack(decoded, sock, addr)
-                            expected_ack += len(decoded['data'])
-                            # Print out all packets in order
-                            while expected_ack in PACKETS:
-                                sys.stdout.write(PACKETS[expected_ack])
-                                expected_ack += len(PACKETS[expected_ack])
-                        else:
-                            log(f"[recv out of order] {decoded['sequence']} ({len(decoded['data'])}) "
-                                f"expected {expected_ack}")
-                            send_ack(decoded, sock, addr)
+                    receive(decoded, expected_ack, sock, addr)
 
                 except (ValueError, KeyError, TypeError) as exc:
                     log("[recv corrupt packet]")
