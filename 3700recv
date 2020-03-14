@@ -67,7 +67,8 @@ def main():
                         if decoded['sequence'] == expected_ack:
                             log(f"[recv data] {decoded['sequence']} ({len(decoded['data'])}) ACCEPTED (in-order)")
                             sys.stdout.write(decoded['data'])
-                            send_ack(decoded, sock, addr)
+                            for x in range (0, 3):
+                            	send_ack(decoded, sock, addr)
                             expected_ack += len(decoded['data'])
                             # Print out all packets in order
                             while expected_ack in PACKETS:

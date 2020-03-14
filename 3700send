@@ -7,13 +7,12 @@ import json
 
 MSG_SIZE = 1500
 DATA_SIZE = 1472
-TIMEOUT = 0.5
+TIMEOUT = 2
 SEQN = 0
 SEQUENCE_TO_MESSAGE = {}
-CWND = 1
-SSTHRESH = 32
+CWND = 50
 ALPHA = 0.875
-RTT = None
+RTT = 1
 
 def log(string):
     sys.stderr.write(datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
@@ -64,7 +63,7 @@ def receive_ack(ack_data, recvtime, sock):
                                      "%Y-%m-%d %H:%M:%S.%f")
         diff = round((recvtime - dispatch).total_seconds(), 4)
         RTT = ALPHA * RTT + (1 - ALPHA) * diff if RTT else diff
-        TIMEOUT = 2 * RTT
+        TIMEOUT = 1.5 * RTT
         sock.settimeout(TIMEOUT)
         log(f"timeout updated to {str(TIMEOUT)}")
         log(f"[recv ack] {str(ack_data)}")
@@ -90,12 +89,6 @@ def send_and_wait_for_acks(sock, dest):
                     receive_ack(decoded, recvtime, sock)
                     # if dictionary is empty, send next wave of packets
                     if not SEQUENCE_TO_MESSAGE:
-                        log("all acks received, CWND " + str(CWND))
-                        if CWND < SSTHRESH:
-                            CWND *= 2
-                        elif CWND == SSTHRESH:
-                            CWND += 1
-                        log("CWND now " + str(CWND))
                         for x in range(0, CWND):
                             # Try to send next packet; break if no more data
                             new_seq = send_next_packet(SEQN, sock, dest)
@@ -106,7 +99,7 @@ def send_and_wait_for_acks(sock, dest):
                 except (ValueError, KeyError, TypeError) as e:
                     log(f"[recv corrupt packet] {e.__str__()}")
         except socket.timeout:
-            CWND = CWND // 2 if CWND > 1 else 1
+            # CWND = CWND // 2 if CWND > 1 else 1
             missing = []
             for seq in sorted(SEQUENCE_TO_MESSAGE.keys()):
                 missing.append(seq)
